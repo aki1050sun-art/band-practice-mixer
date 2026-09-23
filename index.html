@@ -4,24 +4,29 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Band Practice Mixer</title>
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 <main>
   <h1>Band Practice Mixer</h1>
-  <p class="lead">分離済み音源を同期再生して、各パートを0〜100%で調整</p>
+  <p class="lead">Androidで元のMP3/WAVを選び、端末内AIで6パート分離して練習</p>
 
   <section>
-    <h2>1. 曲を読み込む</h2>
-    <p class="note">Demucsで作った6つのWAVをまとめて選んでください。音源はこの端末内で扱い、GitHubにはアップロードしません。</p>
-    <input id="stemFiles" type="file" accept=".wav,.mp3,audio/wav,audio/mpeg" multiple>
-    <div id="loadStatus" class="status">未選択</div>
-    <div id="stemStatus" class="stem-status"></div>
+    <h2>1. 元の曲を選ぶ</h2>
+    <p class="note">MP3またはWAVを1曲選びます。音源そのものは外部サーバーへ送信せず、Androidのブラウザ内で分離します。</p>
+    <input id="sourceFile" type="file" accept=".mp3,.wav,audio/mpeg,audio/wav">
+    <div id="sourceInfo" class="status">未選択</div>
+    <button id="separateBtn" type="button" disabled>AIで6パートに分離</button>
+    <div class="ai-panel">
+      <div id="backendInfo" class="note">端末確認中…</div>
+      <progress id="aiProgress" max="100" value="0"></progress>
+      <div id="aiStatus" class="status" aria-live="polite">待機中</div>
+    </div>
   </section>
 
   <section>
     <h2>2. 保存した曲</h2>
-    <p class="note">このブラウザ内に6パート音源と設定を保存します。同じ端末・同じブラウザなら次回は選び直さず呼び出せます。</p>
+    <p class="note">分離後の6パートと設定をこのブラウザ内に保存できます。同じAndroid・同じブラウザなら次回は再分離不要です。</p>
     <div id="savedSongs" class="saved-songs"><span class="note">保存した曲はありません。</span></div>
   </section>
 
@@ -42,7 +47,8 @@
     <div id="saveStatus" class="note"></div>
 
     <h2>4. 同期再生</h2>
-    <div class="count-help">曲の先頭から再生すると、設定したカウント後に曲が始まります。</div><div id="countDisplay" class="count-display" aria-live="polite"></div>
+    <div class="count-help">曲の先頭から再生すると、設定したカウント後に曲が始まります。</div>
+    <div id="countDisplay" class="count-display" aria-live="polite"></div>
     <div class="transport">
       <button id="playPause" type="button" disabled>▶ 再生</button>
       <input id="seek" type="range" min="0" max="1000" value="0" disabled>
@@ -50,15 +56,24 @@
     </div>
 
     <h2>5. ミキサー</h2>
-    <p class="note">「キーボード」はDemucsの piano.wav を表示しています。シンセ等は「その他」や「ギター」に混ざる場合があります。</p>
+    <p class="note">「キーボード」はAIのpiano出力です。シンセ等は「その他」や「ギター」に一部混ざることがあります。</p>
     <div id="mixers"></div>
   </section>
 
+  <details class="legacy">
+    <summary>PCで分離済みの6ファイルを使う（予備）</summary>
+    <p class="note">従来どおり、vocals / guitar / bass / drums / piano / other の6ファイルをまとめて選べます。</p>
+    <input id="stemFiles" type="file" accept=".wav,.mp3,audio/wav,audio/mpeg" multiple>
+    <div id="loadStatus" class="status">未選択</div>
+    <div id="stemStatus" class="stem-status"></div>
+  </details>
+
   <section>
-    <h2>現在の段階</h2>
-    <p>WindowsのDemucsで6分離 → Webアプリで6パート同期再生・音量調整・曲保存・曲頭カウント、まで実装しています。Web上での自動AI分離はまだ接続していません。</p>
+    <h2>この試作について</h2>
+    <p>AIモデルは初回に約136MB読み込みます。6分程度の曲は端末性能により数分かかることがあります。分離中は画面を閉じず、可能なら充電しながら試してください。</p>
   </section>
 </main>
-<script src="app.js?v=4"></script>
+<script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>
