@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Band Practice Mixer</title><link rel="stylesheet" href="style.css"></head>
+<body><main><h1>Band Practice Mixer</h1><p class="lead">バンド練習用 音源分離・ミキサー</p>
+<section><h2>音源を選択</h2><input id="file" type="file" accept=".mp3,.wav,audio/mpeg,audio/wav"><p id="info">MP3 / WAV に対応</p></section>
+<section id="player" hidden><audio id="audio" controls></audio><h2>ミキサー（試作）</h2><p>AI分離接続前の画面確認用です。</p><div id="mixers"></div></section>
+<section><h2>開発予定</h2><p>AI音源分離 → パート別同期再生 → 無段階音量調整 → 曲前カウントの順に実装します。</p></section>
+</main><script src="app.js"></script></body></html>
