@@ -61,3 +61,9 @@ button:disabled{opacity:.5;cursor:not-allowed}
   .saved-actions{display:grid;grid-template-columns:1fr auto}
   .saved-actions .primary{width:100%}
 }
+
+.saved-actions .secondary{white-space:nowrap}
+@media(max-width:650px){
+  .saved-actions{grid-template-columns:1fr 1fr auto}
+  .saved-actions .primary{width:auto}
+}
