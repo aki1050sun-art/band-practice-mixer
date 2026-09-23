@@ -40,6 +40,7 @@ const countDisplay = document.querySelector("#countDisplay");
 const saveSongBtn = document.querySelector("#saveSong");
 const saveStatus = document.querySelector("#saveStatus");
 const savedSongs = document.querySelector("#savedSongs");
+const savedCount = document.querySelector("#savedCount");
 
 let selectedSourceFile = null;
 let audioCtx = null;
@@ -565,7 +566,7 @@ async function importSongPack(file) {
     importedPack: true
   });
   await renderSavedSongs();
-  packStatus.textContent = "読み込み・保存完了。「保存した曲」から次回すぐ使えます。";
+  packStatus.textContent = "読み込み・保存完了。下の「保存した曲」に追加しました。";
 }
 
 songPackInput.addEventListener("change", async () => {
@@ -719,49 +720,94 @@ async function renderSavedSongs() {
   try {
     const songs = await getAllSongs();
     savedSongs.innerHTML = "";
+    if (savedCount) savedCount.textContent = songs.length + "曲";
     if (!songs.length) {
-      savedSongs.innerHTML = '<span class="note">保存した曲はありません。</span>';
+      savedSongs.innerHTML = '<div class="empty-saved">保存した曲はありません。</div>';
       return;
     }
+
     songs.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+
     for (const song of songs) {
-      const row = document.createElement("div");
-      row.className = "saved-song";
-      const meta = document.createElement("div");
-      meta.innerHTML = `<strong></strong><small>BPM ${song.bpm}・カウント ${song.countBars === 0 ? "なし" : song.countBars + "小節"}</small>`;
-      meta.querySelector("strong").textContent = song.title || "無題";
+      const card = document.createElement("article");
+      card.className = "saved-card";
+
+      const head = document.createElement("div");
+      head.className = "saved-card-head";
+
+      const titleWrap = document.createElement("div");
+      titleWrap.className = "saved-card-title";
+      const title = document.createElement("strong");
+      title.textContent = song.title || "無題";
+      titleWrap.appendChild(title);
+
+      const badges = document.createElement("div");
+      badges.className = "saved-badges";
+      const bpmBadge = document.createElement("span");
+      bpmBadge.className = "badge";
+      bpmBadge.textContent = "BPM " + (song.bpm || 120);
+      const countBadge = document.createElement("span");
+      countBadge.className = "badge";
+      countBadge.textContent = song.countBars === 0 ? "カウントなし" : "カウント " + (song.countBars || 1) + "小節";
+      badges.append(bpmBadge, countBadge);
+
+      if (song.savedAt) {
+        const date = document.createElement("span");
+        date.className = "saved-date";
+        const d = new Date(song.savedAt);
+        date.textContent = d.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" }) + "保存";
+        badges.appendChild(date);
+      }
+
+      titleWrap.appendChild(badges);
+
+      const actions = document.createElement("div");
+      actions.className = "saved-actions";
 
       const loadBtn = document.createElement("button");
       loadBtn.type = "button";
-      loadBtn.textContent = "読み込む";
+      loadBtn.className = "primary";
+      loadBtn.textContent = "▶ 開く";
       loadBtn.addEventListener("click", async () => {
-        const found = new Map();
-        for (const def of stemDefs) {
-          const item = song.stems[def.key];
-          found.set(def.key, new File([item.blob], item.name, { type: item.type || "audio/mpeg" }));
+        loadBtn.disabled = true;
+        loadBtn.textContent = "読み込み中…";
+        try {
+          const found = new Map();
+          for (const def of stemDefs) {
+            const item = song.stems[def.key];
+            found.set(def.key, new File([item.blob], item.name, { type: item.type || "audio/mpeg" }));
+          }
+          renderStemStatus(found);
+          songTitle.value = song.title || "";
+          bpmInput.value = String(song.bpm || 120);
+          countBars.value = String(song.countBars ?? 1);
+          for (const def of stemDefs) volumeValues.set(def.key, song.volumes?.[def.key] ?? 100);
+          await decodeAndLoad(found, song.title || "");
+          mixerSection.scrollIntoView({ behavior: "smooth", block: "start" });
+        } finally {
+          loadBtn.disabled = false;
+          loadBtn.textContent = "▶ 開く";
         }
-        renderStemStatus(found);
-        songTitle.value = song.title || "";
-        bpmInput.value = String(song.bpm || 120);
-        countBars.value = String(song.countBars ?? 1);
-        for (const def of stemDefs) volumeValues.set(def.key, song.volumes?.[def.key] ?? 100);
-        await decodeAndLoad(found, song.title || "");
       });
 
       const delBtn = document.createElement("button");
       delBtn.type = "button";
-      delBtn.className = "danger";
+      delBtn.className = "danger subtle";
       delBtn.textContent = "削除";
       delBtn.addEventListener("click", async () => {
         if (!confirm(`「${song.title || "無題"}」をこのブラウザから削除しますか？`)) return;
         await deleteSong(song.id);
         await renderSavedSongs();
       });
-      row.append(meta, loadBtn, delBtn);
-      savedSongs.appendChild(row);
+
+      actions.append(loadBtn, delBtn);
+      head.append(titleWrap, actions);
+      card.appendChild(head);
+      savedSongs.appendChild(card);
     }
   } catch (err) {
     console.error(err);
+    if (savedCount) savedCount.textContent = "";
     savedSongs.innerHTML = '<span class="note">保存曲の一覧を読み込めませんでした。</span>';
   }
 }
