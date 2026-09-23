@@ -17,6 +17,8 @@ const HALF_OVERLAP = Math.floor(OVERLAP / 2);
 const STRIDE = N_SAMPLES - OVERLAP;
 const MP3_KBPS = 192;
 
+const songPackInput = document.querySelector("#songPack");
+const packStatus = document.querySelector("#packStatus");
 const sourceFileInput = document.querySelector("#sourceFile");
 const sourceInfo = document.querySelector("#sourceInfo");
 const separateBtn = document.querySelector("#separateBtn");
@@ -514,6 +516,68 @@ async function separateOnDevice(file) {
     sourceFileInput.disabled = false;
   }
 }
+
+
+async function importSongPack(file) {
+  if (!window.JSZip) throw new Error("ZIP読込機能を読み込めません");
+  packStatus.textContent = "曲パックを読み込み中…";
+  const zip = await JSZip.loadAsync(file);
+  const found = new Map();
+
+  let meta = {};
+  const metaEntry = Object.values(zip.files).find(x => !x.dir && /(^|\/)metadata\.json$/i.test(x.name));
+  if (metaEntry) {
+    try { meta = JSON.parse(await metaEntry.async("text")); } catch (_) {}
+  }
+
+  for (const def of stemDefs) {
+    const entry = Object.values(zip.files).find(x =>
+      !x.dir && new RegExp("(^|/)"+def.file+"\\.(mp3|wav)$","i").test(x.name)
+    );
+    if (!entry) throw new Error(def.label + " がZIP内にありません");
+    const ext = entry.name.toLowerCase().endsWith(".wav") ? "wav" : "mp3";
+    const type = ext === "wav" ? "audio/wav" : "audio/mpeg";
+    const blob = await entry.async("blob");
+    found.set(def.key, new File([blob], def.file + "." + ext, { type }));
+  }
+
+  const fallbackTitle = file.name.replace(/\.zip$/i, "");
+  const title = meta.title || fallbackTitle;
+  songTitle.value = title;
+  bpmInput.value = String(meta.bpm || 120);
+  countBars.value = String(meta.countBars ?? 1);
+  renderStemStatus(found);
+  await decodeAndLoad(found, title);
+
+  const stems = {};
+  for (const def of stemDefs) {
+    const f = found.get(def.key);
+    stems[def.key] = { blob: f, name: f.name, type: f.type };
+  }
+  const volumes = Object.fromEntries(stemDefs.map(d => [d.key, 100]));
+  await putSong({
+    title,
+    bpm: Number(bpmInput.value) || 120,
+    countBars: Number(countBars.value) || 0,
+    stems,
+    volumes,
+    savedAt: Date.now(),
+    importedPack: true
+  });
+  await renderSavedSongs();
+  packStatus.textContent = "読み込み・保存完了。「保存した曲」から次回すぐ使えます。";
+}
+
+songPackInput.addEventListener("change", async () => {
+  const file = songPackInput.files?.[0];
+  if (!file) return;
+  try {
+    await importSongPack(file);
+  } catch (err) {
+    console.error(err);
+    packStatus.textContent = "曲パックを読み込めませんでした：" + String(err?.message || err);
+  }
+});
 
 function syncSelectedSource() {
   selectedSourceFile = sourceFileInput.files?.[0] || null;
