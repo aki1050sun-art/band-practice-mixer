@@ -1,12 +1,28 @@
 const stemDefs = [
-  { key: "vocals", label: "ボーカル", file: "vocals" },
-  { key: "guitar", label: "ギター", file: "guitar" },
-  { key: "bass", label: "ベース", file: "bass" },
-  { key: "drums", label: "ドラム", file: "drums" },
-  { key: "piano", label: "キーボード", file: "piano" },
-  { key: "other", label: "その他", file: "other" }
+  { key: "vocals", label: "ボーカル", file: "vocals", modelRow: 3 },
+  { key: "guitar", label: "ギター", file: "guitar", modelRow: 4 },
+  { key: "bass", label: "ベース", file: "bass", modelRow: 1 },
+  { key: "drums", label: "ドラム", file: "drums", modelRow: 0 },
+  { key: "piano", label: "キーボード", file: "piano", modelRow: 5 },
+  { key: "other", label: "その他", file: "other", modelRow: 2 }
 ];
 
+const MODEL_URL = "https://huggingface.co/StemSplitio/htdemucs-6s-onnx/resolve/main/htdemucs_6s_fp16weights.onnx";
+const ORT_URL = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.webgpu.min.mjs";
+const ORT_WASM_PATH = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/";
+const SAMPLE_RATE = 44100;
+const N_SAMPLES = Math.round(7.8 * SAMPLE_RATE);
+const OVERLAP = Math.floor(N_SAMPLES / 4);
+const HALF_OVERLAP = Math.floor(OVERLAP / 2);
+const STRIDE = N_SAMPLES - OVERLAP;
+const MP3_KBPS = 192;
+
+const sourceFileInput = document.querySelector("#sourceFile");
+const sourceInfo = document.querySelector("#sourceInfo");
+const separateBtn = document.querySelector("#separateBtn");
+const aiProgress = document.querySelector("#aiProgress");
+const aiStatus = document.querySelector("#aiStatus");
+const backendInfo = document.querySelector("#backendInfo");
 const fileInput = document.querySelector("#stemFiles");
 const loadStatus = document.querySelector("#loadStatus");
 const stemStatus = document.querySelector("#stemStatus");
@@ -23,7 +39,11 @@ const saveSongBtn = document.querySelector("#saveSong");
 const saveStatus = document.querySelector("#saveStatus");
 const savedSongs = document.querySelector("#savedSongs");
 
+let selectedSourceFile = null;
 let audioCtx = null;
+let ortModule = null;
+let demucsSession = null;
+let backendName = "";
 const buffers = new Map();
 const gains = new Map();
 let currentFiles = new Map();
@@ -44,6 +64,15 @@ function formatTime(sec) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+function guessTitle(name) {
+  return name.replace(/\.(mp3|wav)$/i, "");
+}
+
+function setAiProgress(value, message) {
+  aiProgress.value = Math.max(0, Math.min(100, value));
+  aiStatus.textContent = message;
+}
+
 function renderStemStatus(found = new Map()) {
   stemStatus.innerHTML = "";
   for (const def of stemDefs) {
@@ -60,21 +89,17 @@ function buildMixer() {
   for (const def of stemDefs) {
     const row = document.createElement("div");
     row.className = "row";
-
     const label = document.createElement("label");
     label.textContent = def.label;
-
     const slider = document.createElement("input");
     slider.type = "range";
     slider.min = "0";
     slider.max = "100";
     slider.value = String(volumeValues.get(def.key) ?? 100);
     slider.dataset.stem = def.key;
-
     const value = document.createElement("span");
     value.className = "value";
     value.textContent = `${slider.value}%`;
-
     slider.addEventListener("input", () => {
       const n = Number(slider.value);
       volumeValues.set(def.key, n);
@@ -82,7 +107,6 @@ function buildMixer() {
       const gain = gains.get(def.key);
       if (gain) gain.gain.value = n / 100;
     });
-
     row.append(label, slider, value);
     mixers.appendChild(row);
   }
@@ -188,12 +212,8 @@ async function playFrom(position, withCount = false) {
     }, delay));
   }
 
-  // 曲本体はカウント開始時点で、将来の songStart に予約しておく。
-  // setTimeout後に予約するとブラウザの遅延で開始時刻を過ぎることがあるため、
-  // Web Audio の高精度スケジューリングに任せる。
   scheduleStemPlayback(0, songStart);
   playPause.textContent = "■ カウント停止";
-
   const endDelay = Math.max(0, (songStart - audioCtx.currentTime) * 1000);
   countTimers.push(setTimeout(() => {
     if (!isCounting) return;
@@ -282,11 +302,194 @@ async function decodeAndLoad(found, title = "") {
     seek.disabled = false;
   } catch (err) {
     console.error(err);
-    loadStatus.textContent = "読み込みに失敗しました。WAV/MP3ファイルを確認してください。";
+    loadStatus.textContent = "読み込みに失敗しました。音源ファイルを確認してください。";
     playPause.disabled = true;
     seek.disabled = true;
+    throw err;
   }
 }
+
+async function loadOrtAndModel() {
+  if (demucsSession) return demucsSession;
+  setAiProgress(4, "AI実行環境を読み込み中…");
+  if (!ortModule) {
+    ortModule = await import(ORT_URL);
+    ortModule.env.wasm.wasmPaths = ORT_WASM_PATH;
+    ortModule.env.wasm.numThreads = 1;
+  }
+
+  let providers = ["wasm"];
+  backendName = "WASM（CPU）";
+  if ("gpu" in navigator) {
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (adapter) {
+        providers = ["webgpu", "wasm"];
+        backendName = "WebGPU";
+      }
+    } catch (_) {}
+  }
+  backendInfo.textContent = `AI処理: ${backendName}`;
+  setAiProgress(8, "AIモデルを読み込み中… 初回は約136MBです");
+  demucsSession = await ortModule.InferenceSession.create(MODEL_URL, {
+    executionProviders: providers,
+    graphOptimizationLevel: "all"
+  });
+  return demucsSession;
+}
+
+async function decodeSourceTo44100(file) {
+  ensureAudioGraph();
+  await audioCtx.resume();
+  setAiProgress(10, "元の曲を読み込み中…");
+  const arr = await file.arrayBuffer();
+  let decoded = await audioCtx.decodeAudioData(arr);
+  if (decoded.sampleRate === SAMPLE_RATE && decoded.numberOfChannels >= 2) return decoded;
+
+  setAiProgress(12, "44.1kHzへ変換中…");
+  const outLength = Math.ceil(decoded.duration * SAMPLE_RATE);
+  const offline = new OfflineAudioContext(2, outLength, SAMPLE_RATE);
+  const src = offline.createBufferSource();
+  src.buffer = decoded;
+  src.connect(offline.destination);
+  src.start();
+  decoded = await offline.startRendering();
+  return decoded;
+}
+
+function makeStereoChannels(buffer) {
+  const left = buffer.getChannelData(0);
+  const right = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : left;
+  return [left, right];
+}
+
+function floatToInt16(src, from, to) {
+  const out = new Int16Array(to - from);
+  for (let i = from, j = 0; i < to; i++, j++) {
+    const x = Math.max(-1, Math.min(1, src[i] || 0));
+    out[j] = x < 0 ? Math.round(x * 32768) : Math.round(x * 32767);
+  }
+  return out;
+}
+
+function appendMp3(encoder, left, right, parts) {
+  const block = 1152;
+  for (let i = 0; i < left.length; i += block) {
+    const mp3buf = encoder.encodeBuffer(left.subarray(i, i + block), right.subarray(i, i + block));
+    if (mp3buf.length) parts.push(new Uint8Array(mp3buf));
+  }
+}
+
+async function separateOnDevice(file) {
+  if (!window.lamejs?.Mp3Encoder) throw new Error("MP3 encoder could not be loaded");
+  separateBtn.disabled = true;
+  sourceFileInput.disabled = true;
+  try {
+    const sessionPromise = loadOrtAndModel();
+    let sourceBuffer = await decodeSourceTo44100(file);
+    const session = await sessionPromise;
+    const [left, right] = makeStereoChannels(sourceBuffer);
+    const total = left.length;
+    const nChunks = Math.max(1, Math.ceil(Math.max(1, total - N_SAMPLES) / STRIDE) + 1);
+
+    const encoders = {};
+    const mp3Parts = {};
+    for (const def of stemDefs) {
+      encoders[def.key] = new lamejs.Mp3Encoder(2, SAMPLE_RATE, MP3_KBPS);
+      mp3Parts[def.key] = [];
+    }
+
+    setAiProgress(15, `6パート分離を開始します（${nChunks}区間）`);
+    const chunkBuf = new Float32Array(2 * N_SAMPLES);
+
+    for (let ci = 0; ci < nChunks; ci++) {
+      const start = ci * STRIDE;
+      if (start >= total) break;
+      const end = Math.min(start + N_SAMPLES, total);
+      const clen = end - start;
+      chunkBuf.fill(0);
+      chunkBuf.subarray(0, clen).set(left.subarray(start, end));
+      chunkBuf.subarray(N_SAMPLES, N_SAMPLES + clen).set(right.subarray(start, end));
+
+      const tensor = new ortModule.Tensor("float32", chunkBuf, [1, 2, N_SAMPLES]);
+      const result = await session.run({ mix: tensor });
+      const stemsTensor = result.stems || result[session.outputNames[0]];
+      if (!stemsTensor?.data) throw new Error("AI output not found");
+      const stemData = stemsTensor.data;
+
+      const emitFrom = ci === 0 ? 0 : HALF_OVERLAP;
+      const emitTo = (ci === nChunks - 1 || end === total)
+        ? clen
+        : Math.min(clen, N_SAMPLES - HALF_OVERLAP);
+
+      for (const def of stemDefs) {
+        const rowBase = def.modelRow * 2 * N_SAMPLES;
+        const l16 = floatToInt16(stemData, rowBase + emitFrom, rowBase + emitTo);
+        const r16 = floatToInt16(stemData, rowBase + N_SAMPLES + emitFrom, rowBase + N_SAMPLES + emitTo);
+        appendMp3(encoders[def.key], l16, r16, mp3Parts[def.key]);
+      }
+
+      const pct = 15 + Math.round(((ci + 1) / nChunks) * 75);
+      setAiProgress(pct, `AI分離中… ${ci + 1}/${nChunks}（${pct}%）`);
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+
+    setAiProgress(92, "MP3にまとめています…");
+    sourceBuffer = null;
+    const found = new Map();
+    const base = guessTitle(file.name);
+    for (const def of stemDefs) {
+      const last = encoders[def.key].flush();
+      if (last.length) mp3Parts[def.key].push(new Uint8Array(last));
+      const blob = new Blob(mp3Parts[def.key], { type: "audio/mpeg" });
+      found.set(def.key, new File([blob], `${def.file}.mp3`, { type: "audio/mpeg" }));
+    }
+
+    renderStemStatus(found);
+    songTitle.value = base;
+    setAiProgress(96, "ミキサーへ読み込み中…");
+    await decodeAndLoad(found, base);
+    setAiProgress(100, `分離完了（${backendName}）`);
+    loadStatus.textContent = `AI分離完了：6パート（MP3 ${MP3_KBPS}kbps）`;
+  } finally {
+    separateBtn.disabled = !selectedSourceFile;
+    sourceFileInput.disabled = false;
+  }
+}
+
+sourceFileInput.addEventListener("change", () => {
+  selectedSourceFile = sourceFileInput.files?.[0] || null;
+  aiProgress.value = 0;
+  aiStatus.textContent = "待機中";
+  if (!selectedSourceFile) {
+    sourceInfo.textContent = "未選択";
+    separateBtn.disabled = true;
+    return;
+  }
+  const ok = /\.(mp3|wav)$/i.test(selectedSourceFile.name) ||
+    ["audio/mpeg", "audio/wav", "audio/x-wav"].includes(selectedSourceFile.type);
+  if (!ok) {
+    sourceInfo.textContent = "MP3またはWAVを選択してください。";
+    selectedSourceFile = null;
+    separateBtn.disabled = true;
+    return;
+  }
+  sourceInfo.textContent = `${selectedSourceFile.name}（${(selectedSourceFile.size / 1024 / 1024).toFixed(1)}MB）`;
+  songTitle.value = guessTitle(selectedSourceFile.name);
+  separateBtn.disabled = false;
+});
+
+separateBtn.addEventListener("click", async () => {
+  if (!selectedSourceFile) return;
+  try {
+    await separateOnDevice(selectedSourceFile);
+  } catch (err) {
+    console.error(err);
+    setAiProgress(0, "AI分離に失敗しました。");
+    const msg = String(err?.message || err);
+    backendInfo.textContent = `エラー: ${msg.slice(0, 180)}`;
+  }
+});
 
 function detectFiles(files) {
   const found = new Map();
@@ -305,24 +508,16 @@ fileInput.addEventListener("change", async () => {
   const found = detectFiles(files);
   renderStemStatus(found);
   const missing = stemDefs.filter(d => !found.has(d.key));
-
   if (missing.length) {
-    loadStatus.textContent = `6ファイル中 ${6 - missing.length}個を認識しました。未認識: ${missing.map(x => x.label).join("、")}`;
-    mixerSection.hidden = true;
-    playPause.disabled = true;
-    seek.disabled = true;
+    loadStatus.textContent = `6ファイル中 ${6 - missing.length}個を認識。未認識: ${missing.map(x => x.label).join("、")}`;
     return;
   }
-
-  const parentGuess = files[0].webkitRelativePath ? files[0].webkitRelativePath.split("/")[0] : "";
-  if (!songTitle.value) songTitle.value = parentGuess;
   await decodeAndLoad(found, songTitle.value);
 });
 
 playPause.addEventListener("click", async () => {
-  if (isPlaying || isCounting) {
-    pausePlayback();
-  } else {
+  if (isPlaying || isCounting) pausePlayback();
+  else {
     if (offset >= duration) offset = 0;
     await playFrom(offset, offset < 0.05);
   }
@@ -338,9 +533,8 @@ seek.addEventListener("input", () => {
 seek.addEventListener("change", async () => {
   if (!duration) return;
   const newPos = (Number(seek.value) / 1000) * duration;
-  if (isPlaying) {
-    await playFrom(newPos, false);
-  } else {
+  if (isPlaying) await playFrom(newPos, false);
+  else {
     offset = newPos;
     updateTransport();
   }
@@ -351,9 +545,7 @@ function openDb() {
     const req = indexedDB.open("BandPracticeMixerDB", 1);
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains("songs")) {
-        db.createObjectStore("songs", { keyPath: "id", autoIncrement: true });
-      }
+      if (!db.objectStoreNames.contains("songs")) db.createObjectStore("songs", { keyPath: "id", autoIncrement: true });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -363,8 +555,7 @@ function openDb() {
 async function getAllSongs() {
   const db = await openDb();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction("songs", "readonly");
-    const req = tx.objectStore("songs").getAll();
+    const req = db.transaction("songs", "readonly").objectStore("songs").getAll();
     req.onsuccess = () => resolve(req.result || []);
     req.onerror = () => reject(req.error);
   });
@@ -373,8 +564,7 @@ async function getAllSongs() {
 async function putSong(record) {
   const db = await openDb();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction("songs", "readwrite");
-    const req = tx.objectStore("songs").put(record);
+    const req = db.transaction("songs", "readwrite").objectStore("songs").put(record);
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
@@ -383,8 +573,7 @@ async function putSong(record) {
 async function deleteSong(id) {
   const db = await openDb();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction("songs", "readwrite");
-    const req = tx.objectStore("songs").delete(id);
+    const req = db.transaction("songs", "readwrite").objectStore("songs").delete(id);
     req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
   });
@@ -410,12 +599,10 @@ async function renderSavedSongs() {
       loadBtn.type = "button";
       loadBtn.textContent = "読み込む";
       loadBtn.addEventListener("click", async () => {
-        loadStatus.textContent = "保存曲を読み込み中…";
         const found = new Map();
         for (const def of stemDefs) {
           const item = song.stems[def.key];
-          const file = new File([item.blob], item.name, { type: item.type || "audio/wav" });
-          found.set(def.key, file);
+          found.set(def.key, new File([item.blob], item.name, { type: item.type || "audio/mpeg" }));
         }
         renderStemStatus(found);
         songTitle.value = song.title || "";
@@ -434,7 +621,6 @@ async function renderSavedSongs() {
         await deleteSong(song.id);
         await renderSavedSongs();
       });
-
       row.append(meta, loadBtn, delBtn);
       savedSongs.appendChild(row);
     }
@@ -446,7 +632,7 @@ async function renderSavedSongs() {
 
 saveSongBtn.addEventListener("click", async () => {
   if (currentFiles.size !== 6) {
-    saveStatus.textContent = "先に6パートを読み込んでください。";
+    saveStatus.textContent = "先に6パートを準備してください。";
     return;
   }
   const title = songTitle.value.trim() || "無題";
@@ -458,21 +644,34 @@ saveSongBtn.addEventListener("click", async () => {
     stems[def.key] = { blob: file, name: file.name, type: file.type };
   }
   const volumes = Object.fromEntries(stemDefs.map(d => [d.key, volumeValues.get(d.key) ?? 100]));
-
   saveSongBtn.disabled = true;
-  saveStatus.textContent = "保存中…（WAVは容量が大きいため少し時間がかかることがあります）";
+  saveStatus.textContent = "保存中…";
   try {
     await putSong({ title, bpm, countBars: bars, stems, volumes, savedAt: Date.now() });
     saveStatus.textContent = "保存しました。次回は「保存した曲」から読み込めます。";
     await renderSavedSongs();
   } catch (err) {
     console.error(err);
-    saveStatus.textContent = "保存できませんでした。ブラウザの保存容量が不足している可能性があります。";
+    saveStatus.textContent = "保存できませんでした。ブラウザの保存容量を確認してください。";
   } finally {
     saveSongBtn.disabled = false;
   }
 });
 
+async function detectBackend() {
+  if ("gpu" in navigator) {
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (adapter) {
+        backendInfo.textContent = "この端末はWebGPU対応です。高速AI分離を試せます。";
+        return;
+      }
+    } catch (_) {}
+  }
+  backendInfo.textContent = "WebGPUを確認できません。CPU処理になるため時間がかかる可能性があります。";
+}
+
 buildMixer();
 renderStemStatus();
 renderSavedSongs();
+detectBackend();
