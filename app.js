@@ -175,7 +175,7 @@ function scheduleClick(when, accent) {
 }
 
 async function playFrom(position, withCount = false) {
-  if (!buffers.size) return;
+  if (!mediaEls.size) return;
   ensureAudioGraph();
   await audioCtx.resume();
   stopEverything();
