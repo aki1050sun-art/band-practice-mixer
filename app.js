@@ -7,7 +7,7 @@ const stemDefs = [
   { key: "other", label: "その他", file: "other", modelRow: 2 }
 ];
 
-const MODEL_URL = "https://huggingface.co/StemSplitio/htdemucs-6s-onnx/resolve/main/htdemucs_6s_fp16weights.onnx";
+const MODEL_URL = "https://huggingface.co/kramp/htdemucs-6s-webgpu-onnx/resolve/main/htdemucs_6s.onnx";
 const ORT_URL = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort.webgpu.min.mjs";
 const ORT_WASM_PATH = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/";
 const SAMPLE_RATE = 44100;
@@ -318,13 +318,18 @@ async function loadOrtAndModel() {
     ortModule.env.wasm.numThreads = 1;
   }
 
-  // Android Chrome の WebGPU では一部端末でモデル初期化に失敗することがあるため、
-  // まず安定性優先で WASM(CPU) を使用する。
-  backendName = "WASM（CPU・安定モード）";
-  backendInfo.textContent = "AI処理: " + backendName;
-  setAiProgress(8, "AIモデルを読み込み中… 初回は約136MBです");
+  if (!("gpu" in navigator)) {
+    throw new Error("このブラウザではWebGPUを利用できません。AndroidのChrome最新版で開いてください。");
+  }
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) {
+    throw new Error("WebGPUアダプターを取得できません。AndroidのChrome最新版で開いてください。");
+  }
+  backendName = "WebGPU";
+  backendInfo.textContent = "AI処理: WebGPU";
+  setAiProgress(8, "WebGPU対応AIモデルを読み込み中… 初回は約285MBです");
   demucsSession = await ortModule.InferenceSession.create(MODEL_URL, {
-    executionProviders: ["wasm"],
+    executionProviders: ["webgpu"],
     graphOptimizationLevel: "all"
   });
   return demucsSession;
@@ -655,12 +660,12 @@ async function detectBackend() {
     try {
       const adapter = await navigator.gpu.requestAdapter();
       if (adapter) {
-        backendInfo.textContent = "WebGPU対応端末ですが、現在は安定性優先でWASM（CPU）を使います。";
+        backendInfo.textContent = "WebGPUを利用できます。Android端末内で6分離を試せます。";
         return;
       }
     } catch (_) {}
   }
-  backendInfo.textContent = "安定性優先でWASM（CPU）を使います。";
+  backendInfo.textContent = "WebGPUを利用できません。AndroidのChrome最新版で開いてください。";
 }
 
 buildMixer();
