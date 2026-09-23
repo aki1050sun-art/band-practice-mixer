@@ -43,3 +43,21 @@ button:disabled{opacity:.5;cursor:not-allowed}
   .saved-song{grid-template-columns:1fr auto}
   .saved-song .danger{grid-column:2}
 }
+.saved-toolbar{display:flex;justify-content:space-between;align-items:center;margin:4px 0 12px}
+.saved-toolbar strong{font-size:18px}
+.saved-songs{gap:12px}
+.saved-card{border:1px solid #ddd;border-radius:12px;padding:14px;background:#fafafa}
+.saved-card-head{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}
+.saved-card-title strong{display:block;font-size:18px;line-height:1.35;word-break:break-word}
+.saved-badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center}
+.badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#eceff3;font-size:12px;color:#333}
+.saved-date{font-size:12px;color:#777}
+.saved-actions{display:flex;gap:8px;align-items:center}
+.saved-actions .primary{font-weight:700;min-width:88px}
+.saved-actions .subtle{padding-left:10px;padding-right:10px}
+.empty-saved{padding:16px;border:1px dashed #ccc;border-radius:10px;color:#777;text-align:center}
+@media(max-width:650px){
+  .saved-card-head{grid-template-columns:1fr}
+  .saved-actions{display:grid;grid-template-columns:1fr auto}
+  .saved-actions .primary{width:100%}
+}
