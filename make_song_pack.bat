@@ -29,8 +29,12 @@ if not exist "%WORK%" mkdir "%WORK%"
 
 echo.
 echo [0/5] Preparing audio...
-for /f "usebackq delims=" %%F in (`"%PY%" -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"`) do set "FFMPEG=%%F"
-if not exist "%FFMPEG%" goto :error
+set "FFMPEG=%USERPROFILE%\anaconda3\envs\demucs\Lib\site-packages\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe"
+if not exist "%FFMPEG%" (
+  echo FFmpeg not found:
+  echo %FFMPEG%
+  goto :error
+)
 
 "%FFMPEG%" -y -loglevel error -i "%SRC%" -ar 44100 -ac 2 -c:a pcm_s16le "%CLEANWAV%"
 if errorlevel 1 goto :error
