@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Band Practice Mixer</title>
-  <link rel="stylesheet" href="style.css?v=10">
+  <link rel="stylesheet" href="style.css?v=11">
 </head>
 <body>
 <main>
@@ -12,8 +12,15 @@
   <p class="lead">Androidで元のMP3/WAVを選び、端末内AIで6パート分離して練習</p>
 
   <section>
-    <h2>1. 元の曲を選ぶ</h2>
-    <p class="note">MP3またはWAVを1曲選びます。音源そのものは外部サーバーへ送信せず、Androidのブラウザ内で分離します。</p>
+    <h2>1. PCで作った曲パックを読み込む</h2>
+    <p class="note">Windowsで作ったZIPを1つ選ぶだけです。6パートをこのスマホに保存するので、次回からは「保存した曲」からすぐ再生できます。</p>
+    <input id="songPack" type="file" accept=".zip,application/zip">
+    <div id="packStatus" class="status">未選択</div>
+  </section>
+
+  <details class="legacy">
+    <summary>スマホ内AI分離（試験用・時間がかかります）</summary>
+    <p class="note">Androidだけで分離する試験機能です。実測で長時間かかるため、通常は上のPC曲パック方式を使ってください。</p>
     <input id="sourceFile" type="file" accept=".mp3,.wav,audio/mpeg,audio/wav">
     <div id="sourceInfo" class="status">未選択</div>
     <button id="separateBtn" type="button" disabled>AIで6パートに分離</button>
@@ -22,7 +29,7 @@
       <progress id="aiProgress" max="100" value="0"></progress>
       <div id="aiStatus" class="status" aria-live="polite">待機中</div>
     </div>
-  </section>
+  </details>
 
   <section>
     <h2>2. 保存した曲</h2>
@@ -73,7 +80,8 @@
     <p>高速6分離モデルは初回に約336MB読み込みます。2回目以降は端末内キャッシュを使います。分離中は画面を閉じず、可能なら充電しながら試してください。</p>
   </section>
 </main>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
-<script src="app.js?v=10"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>
