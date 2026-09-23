@@ -318,21 +318,13 @@ async function loadOrtAndModel() {
     ortModule.env.wasm.numThreads = 1;
   }
 
-  let providers = ["wasm"];
-  backendName = "WASM（CPU）";
-  if ("gpu" in navigator) {
-    try {
-      const adapter = await navigator.gpu.requestAdapter();
-      if (adapter) {
-        providers = ["webgpu", "wasm"];
-        backendName = "WebGPU";
-      }
-    } catch (_) {}
-  }
-  backendInfo.textContent = `AI処理: ${backendName}`;
+  // Android Chrome の WebGPU では一部端末でモデル初期化に失敗することがあるため、
+  // まず安定性優先で WASM(CPU) を使用する。
+  backendName = "WASM（CPU・安定モード）";
+  backendInfo.textContent = "AI処理: " + backendName;
   setAiProgress(8, "AIモデルを読み込み中… 初回は約136MBです");
   demucsSession = await ortModule.InferenceSession.create(MODEL_URL, {
-    executionProviders: providers,
+    executionProviders: ["wasm"],
     graphOptimizationLevel: "all"
   });
   return demucsSession;
@@ -663,12 +655,12 @@ async function detectBackend() {
     try {
       const adapter = await navigator.gpu.requestAdapter();
       if (adapter) {
-        backendInfo.textContent = "この端末はWebGPU対応です。高速AI分離を試せます。";
+        backendInfo.textContent = "WebGPU対応端末ですが、現在は安定性優先でWASM（CPU）を使います。";
         return;
       }
     } catch (_) {}
   }
-  backendInfo.textContent = "WebGPUを確認できません。CPU処理になるため時間がかかる可能性があります。";
+  backendInfo.textContent = "安定性優先でWASM（CPU）を使います。";
 }
 
 buildMixer();
