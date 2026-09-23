@@ -188,12 +188,18 @@ async function playFrom(position, withCount = false) {
     }, delay));
   }
 
+  // 曲本体はカウント開始時点で、将来の songStart に予約しておく。
+  // setTimeout後に予約するとブラウザの遅延で開始時刻を過ぎることがあるため、
+  // Web Audio の高精度スケジューリングに任せる。
+  scheduleStemPlayback(0, songStart);
+  playPause.textContent = "■ カウント停止";
+
   const endDelay = Math.max(0, (songStart - audioCtx.currentTime) * 1000);
   countTimers.push(setTimeout(() => {
     if (!isCounting) return;
     isCounting = false;
     countDisplay.textContent = "";
-    scheduleStemPlayback(0, songStart);
+    playPause.textContent = "⏸ 一時停止";
   }, endDelay));
 }
 
@@ -204,8 +210,12 @@ function currentPosition() {
 
 function pausePlayback() {
   if (isCounting) {
-    stopCountIn();
+    stopEverything();
+    isPlaying = false;
+    offset = 0;
     playPause.textContent = "▶ 再生";
+    if (rafId) cancelAnimationFrame(rafId);
+    updateTransport();
     return;
   }
   offset = currentPosition();
