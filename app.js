@@ -716,6 +716,43 @@ async function deleteSong(id) {
   });
 }
 
+
+function sanitizeFileName(name) {
+  return String(name || "song")
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim() || "song";
+}
+
+async function exportSongZip(song) {
+  if (!window.JSZip) throw new Error("ZIP作成機能を読み込めません");
+  const zip = new JSZip();
+
+  for (const def of stemDefs) {
+    const item = song.stems?.[def.key];
+    if (!item?.blob) throw new Error(def.label + " の保存データがありません");
+    const ext = (item.name || "").toLowerCase().endsWith(".wav") ? "wav" : "mp3";
+    zip.file(def.file + "." + ext, item.blob);
+  }
+
+  const metadata = {
+    title: song.title || "無題",
+    bpm: Number(song.bpm) || 120,
+    countBars: Number.isFinite(Number(song.countBars)) ? Number(song.countBars) : 1
+  };
+  zip.file("metadata.json", JSON.stringify(metadata, null, 2));
+
+  const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = sanitizeFileName(song.title || "song") + "_bandmix.zip";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
 async function renderSavedSongs() {
   try {
     const songs = await getAllSongs();
@@ -790,6 +827,25 @@ async function renderSavedSongs() {
         }
       });
 
+      const exportBtn = document.createElement("button");
+      exportBtn.type = "button";
+      exportBtn.className = "secondary";
+      exportBtn.textContent = "ZIPを書き出す";
+      exportBtn.addEventListener("click", async () => {
+        exportBtn.disabled = true;
+        const originalText = exportBtn.textContent;
+        exportBtn.textContent = "作成中…";
+        try {
+          await exportSongZip(song);
+        } catch (err) {
+          console.error(err);
+          alert("ZIPを書き出せませんでした：" + String(err?.message || err));
+        } finally {
+          exportBtn.disabled = false;
+          exportBtn.textContent = originalText;
+        }
+      });
+
       const delBtn = document.createElement("button");
       delBtn.type = "button";
       delBtn.className = "danger subtle";
@@ -800,7 +856,7 @@ async function renderSavedSongs() {
         await renderSavedSongs();
       });
 
-      actions.append(loadBtn, delBtn);
+      actions.append(loadBtn, exportBtn, delBtn);
       head.append(titleWrap, actions);
       card.appendChild(head);
       savedSongs.appendChild(card);
