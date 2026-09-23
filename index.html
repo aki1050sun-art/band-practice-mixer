@@ -12,29 +12,51 @@
   <p class="lead">分離済み音源を同期再生して、各パートを0〜100%で調整</p>
 
   <section>
-    <h2>1. 分離済み6ファイルを選択</h2>
-    <p class="note">Demucsで作った6つのWAVをまとめて選んでください。音源はこの端末内で読み込むだけで、GitHubにはアップロードしません。</p>
+    <h2>1. 曲を読み込む</h2>
+    <p class="note">Demucsで作った6つのWAVをまとめて選んでください。音源はこの端末内で扱い、GitHubにはアップロードしません。</p>
     <input id="stemFiles" type="file" accept=".wav,.mp3,audio/wav,audio/mpeg" multiple>
     <div id="loadStatus" class="status">未選択</div>
     <div id="stemStatus" class="stem-status"></div>
   </section>
 
+  <section>
+    <h2>2. 保存した曲</h2>
+    <p class="note">このブラウザ内に6パート音源と設定を保存します。同じ端末・同じブラウザなら次回は選び直さず呼び出せます。</p>
+    <div id="savedSongs" class="saved-songs"><span class="note">保存した曲はありません。</span></div>
+  </section>
+
   <section id="mixerSection" hidden>
-    <h2>2. 同期再生</h2>
+    <h2>3. 曲の設定</h2>
+    <div class="song-settings">
+      <label>曲名<input id="songTitle" type="text" placeholder="曲名"></label>
+      <label>BPM<input id="bpm" type="number" min="30" max="300" value="120"></label>
+      <label>カウント
+        <select id="countBars">
+          <option value="0">なし</option>
+          <option value="1" selected>1小節</option>
+          <option value="2">2小節</option>
+        </select>
+      </label>
+      <button id="saveSong" type="button">この曲を保存</button>
+    </div>
+    <div id="saveStatus" class="note"></div>
+
+    <h2>4. 同期再生</h2>
+    <div id="countDisplay" class="count-display" aria-live="polite"></div>
     <div class="transport">
       <button id="playPause" type="button" disabled>▶ 再生</button>
       <input id="seek" type="range" min="0" max="1000" value="0" disabled>
       <span id="time">0:00 / 0:00</span>
     </div>
 
-    <h2>3. ミキサー</h2>
+    <h2>5. ミキサー</h2>
     <p class="note">「キーボード」はDemucsの piano.wav を表示しています。シンセ等は「その他」や「ギター」に混ざる場合があります。</p>
     <div id="mixers"></div>
   </section>
 
   <section>
     <h2>現在の段階</h2>
-    <p>WindowsのDemucsで6分離 → このWebアプリで6パート同期再生・音量調整、まで実装中です。Web上での自動AI分離はまだ接続していません。</p>
+    <p>WindowsのDemucsで6分離 → Webアプリで6パート同期再生・音量調整・曲保存・曲頭カウント、まで実装しています。Web上での自動AI分離はまだ接続していません。</p>
   </section>
 </main>
 <script src="app.js"></script>
