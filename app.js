@@ -423,79 +423,69 @@ function appendMp3(encoder, left, right, parts) {
   }
 }
 
+async function encodePlanarMp3(planar, sampleRate = 44100, kbps = 192) {
+  const N = Math.floor(planar.length / 2);
+  const enc = new lamejs.Mp3Encoder(2, sampleRate, kbps);
+  const parts = [];
+  const block = 1152;
+  for (let from = 0; from < N; from += block) {
+    const to = Math.min(N, from + block);
+    const l16 = new Int16Array(to - from);
+    const r16 = new Int16Array(to - from);
+    for (let i = from, j = 0; i < to; i++, j++) {
+      const l = Math.max(-1, Math.min(1, planar[i] || 0));
+      const r = Math.max(-1, Math.min(1, planar[N + i] || 0));
+      l16[j] = l < 0 ? Math.round(l * 32768) : Math.round(l * 32767);
+      r16[j] = r < 0 ? Math.round(r * 32768) : Math.round(r * 32767);
+    }
+    const b = enc.encodeBuffer(l16, r16);
+    if (b.length) parts.push(new Uint8Array(b));
+    if ((from / block) % 32 === 0) await new Promise(r => setTimeout(r, 0));
+  }
+  const tail = enc.flush();
+  if (tail.length) parts.push(new Uint8Array(tail));
+  return new Blob(parts, { type: "audio/mpeg" });
+}
+
 async function separateOnDevice(file) {
   if (!window.lamejs?.Mp3Encoder) throw new Error("MP3 encoder could not be loaded");
   separateBtn.disabled = true;
   sourceFileInput.disabled = true;
   try {
-    const sessionPromise = loadOrtAndModel();
-    let sourceBuffer = await decodeSourceTo44100(file);
-    const session = await sessionPromise;
-    const [left, right] = makeStereoChannels(sourceBuffer);
-    const total = left.length;
-    const nChunks = Math.max(1, Math.ceil(Math.max(1, total - N_SAMPLES) / STRIDE) + 1);
-
-    const encoders = {};
-    const mp3Parts = {};
-    for (const def of stemDefs) {
-      encoders[def.key] = new lamejs.Mp3Encoder(2, SAMPLE_RATE, MP3_KBPS);
-      mp3Parts[def.key] = [];
-    }
-
-    setAiProgress(15, `6パート分離を開始します（${nChunks}区間）`);
-    const chunkBuf = new Float32Array(2 * N_SAMPLES);
-
-    for (let ci = 0; ci < nChunks; ci++) {
-      const start = ci * STRIDE;
-      if (start >= total) break;
-      const end = Math.min(start + N_SAMPLES, total);
-      const clen = end - start;
-      chunkBuf.fill(0);
-      chunkBuf.subarray(0, clen).set(left.subarray(start, end));
-      chunkBuf.subarray(N_SAMPLES, N_SAMPLES + clen).set(right.subarray(start, end));
-
-      const tensor = new ortModule.Tensor("float32", chunkBuf, [1, 2, N_SAMPLES]);
-      const result = await session.run({ mix: tensor });
-      const stemsTensor = result.stems || result[session.outputNames[0]];
-      if (!stemsTensor?.data) throw new Error("AI output not found");
-      const stemData = stemsTensor.data;
-
-      const emitFrom = ci === 0 ? 0 : HALF_OVERLAP;
-      const emitTo = (ci === nChunks - 1 || end === total)
-        ? clen
-        : Math.min(clen, N_SAMPLES - HALF_OVERLAP);
-
-      for (const def of stemDefs) {
-        const rowBase = def.modelRow * 2 * N_SAMPLES;
-        const l16 = floatToInt16(stemData, rowBase + emitFrom, rowBase + emitTo);
-        const r16 = floatToInt16(stemData, rowBase + N_SAMPLES + emitFrom, rowBase + N_SAMPLES + emitTo);
-        appendMp3(encoders[def.key], l16, r16, mp3Parts[def.key]);
+    setAiProgress(1, "高速分離エンジンを準備中…");
+    const { separateFast } = await import("./fast-separator.js?v=2");
+    const result = await separateFast(file, p => {
+      if (p.phase === "model") {
+        setAiProgress(Math.max(2, Math.round((p.fraction || 0) * 10)), p.text);
+      } else if (p.phase === "session" || p.phase === "decode") {
+        setAiProgress(12, p.text);
+      } else if (p.phase === "separate") {
+        setAiProgress(15 + Math.round((p.fraction || 0) * 70), p.text);
       }
+    });
 
-      const pct = 15 + Math.round(((ci + 1) / nChunks) * 75);
-      setAiProgress(pct, `AI分離中… ${ci + 1}/${nChunks}（${pct}%）`);
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
+    backendName = result.backend;
+    backendInfo.textContent = "AI処理: 高速6分離 / " + backendName;
+    setAiProgress(87, "分離結果をMP3に変換中…");
 
-    setAiProgress(92, "MP3にまとめています…");
-    sourceBuffer = null;
     const found = new Map();
     const base = guessTitle(file.name);
-    for (const def of stemDefs) {
-      const last = encoders[def.key].flush();
-      if (last.length) mp3Parts[def.key].push(new Uint8Array(last));
-      const blob = new Blob(mp3Parts[def.key], { type: "audio/mpeg" });
-      found.set(def.key, new File([blob], `${def.file}.mp3`, { type: "audio/mpeg" }));
+    for (let i = 0; i < stemDefs.length; i++) {
+      const def = stemDefs[i];
+      const planar = result.stems[def.file];
+      if (!planar) throw new Error(def.file + " の分離結果がありません");
+      const blob = await encodePlanarMp3(planar, result.sampleRate, MP3_KBPS);
+      found.set(def.key, new File([blob], def.file + ".mp3", { type: "audio/mpeg" }));
+      setAiProgress(87 + Math.round(((i + 1) / stemDefs.length) * 8), "MP3変換中… " + (i + 1) + "/6");
     }
 
     renderStemStatus(found);
     songTitle.value = base;
     setAiProgress(96, "ミキサーへ読み込み中…");
     await decodeAndLoad(found, base);
-    setAiProgress(100, `分離完了（${backendName}）`);
-    loadStatus.textContent = `AI分離完了：6パート（MP3 ${MP3_KBPS}kbps）`;
+    setAiProgress(100, "分離完了（高速モード）");
+    loadStatus.textContent = "AI分離完了：6パート（MP3 " + MP3_KBPS + "kbps）";
 
-    // 分離完了時点で自動保存。画面を閉じても次回「保存した曲」から戻せるようにする。
     try {
       if (navigator.storage?.persist) await navigator.storage.persist();
       const stems = {};
