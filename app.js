@@ -1,0 +1,4 @@
+const file=document.querySelector("#file"),audio=document.querySelector("#audio"),info=document.querySelector("#info"),player=document.querySelector("#player"),mixers=document.querySelector("#mixers");
+const parts=["ボーカル","ギター","ベース","ドラム","鍵盤","その他"];
+for(const part of parts){const row=document.createElement("div");row.className="row";row.innerHTML=`<label>${part}</label><input type="range" min="0" max="100" value="100" disabled><span class="value">100%</span>`;mixers.appendChild(row)}
+file.addEventListener("change",()=>{const f=file.files[0];if(!f)return;const ok=/\.(mp3|wav)$/i.test(f.name)||["audio/mpeg","audio/wav","audio/x-wav"].includes(f.type);if(!ok){info.textContent="MP3 または WAV を選択してください。";return}audio.src=URL.createObjectURL(f);info.textContent=`${f.name} を読み込みました。`;player.hidden=false});
