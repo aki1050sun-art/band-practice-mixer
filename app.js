@@ -454,14 +454,14 @@ async function separateOnDevice(file) {
   }
 }
 
-sourceFileInput.addEventListener("change", () => {
+function syncSelectedSource() {
   selectedSourceFile = sourceFileInput.files?.[0] || null;
   aiProgress.value = 0;
   aiStatus.textContent = "待機中";
   if (!selectedSourceFile) {
     sourceInfo.textContent = "未選択";
     separateBtn.disabled = true;
-    return;
+    return false;
   }
   const ok = /\.(mp3|wav)$/i.test(selectedSourceFile.name) ||
     ["audio/mpeg", "audio/wav", "audio/x-wav"].includes(selectedSourceFile.type);
@@ -469,15 +469,23 @@ sourceFileInput.addEventListener("change", () => {
     sourceInfo.textContent = "MP3またはWAVを選択してください。";
     selectedSourceFile = null;
     separateBtn.disabled = true;
-    return;
+    return false;
   }
   sourceInfo.textContent = `${selectedSourceFile.name}（${(selectedSourceFile.size / 1024 / 1024).toFixed(1)}MB）`;
   songTitle.value = guessTitle(selectedSourceFile.name);
   separateBtn.disabled = false;
-});
+  return true;
+}
+
+sourceFileInput.addEventListener("change", syncSelectedSource);
 
 separateBtn.addEventListener("click", async () => {
-  if (!selectedSourceFile) return;
+  // Android/Edge may visually retain the chosen filename after a page reload
+  // even though the in-memory JS variable was reset. Read the file input again here.
+  if (!selectedSourceFile && !syncSelectedSource()) {
+    sourceInfo.textContent = "もう一度「ファイルの選択」から曲を選んでください。";
+    return;
+  }
   try {
     await separateOnDevice(selectedSourceFile);
   } catch (err) {
@@ -672,3 +680,8 @@ buildMixer();
 renderStemStatus();
 renderSavedSongs();
 detectBackend();
+
+
+window.addEventListener("pageshow", () => {
+  if (sourceFileInput.files && sourceFileInput.files.length) syncSelectedSource();
+});
