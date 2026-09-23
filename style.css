@@ -4,9 +4,12 @@ main{max-width:860px;margin:auto;padding:24px 16px 60px}
 h1{margin:0 0 4px}
 h2{margin-top:0}
 .lead,.note{color:#666}
-section{background:#fff;border:1px solid #ddd;border-radius:14px;padding:18px;margin:16px 0}
+section,.legacy{background:#fff;border:1px solid #ddd;border-radius:14px;padding:18px;margin:16px 0}
 input,select{max-width:100%;font:inherit}
 .status{margin-top:12px;font-weight:700}
+#separateBtn{margin-top:12px;width:100%}
+.ai-panel{margin-top:14px}
+progress{width:100%;height:18px;margin:8px 0}
 .stem-status{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px}
 .stem-chip{padding:8px 10px;border-radius:10px;background:#f1f2f4}
 .stem-chip.ok{background:#e9f7ee}
@@ -14,7 +17,7 @@ input,select{max-width:100%;font:inherit}
 .song-settings label{display:grid;gap:5px;font-size:14px}
 .song-settings input,.song-settings select{width:100%;padding:9px;border:1px solid #bbb;border-radius:9px;background:#fff}
 .transport{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;margin:10px 0 24px}
-button{font:inherit;padding:10px 16px;border:1px solid #bbb;border-radius:10px;background:#fff;cursor:pointer}
+button{font:inherit;padding:11px 16px;border:1px solid #bbb;border-radius:10px;background:#fff;cursor:pointer;min-height:44px}
 button:disabled{opacity:.5;cursor:not-allowed}
 #seek{width:100%}
 #time{font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -28,6 +31,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .saved-song strong{display:block}
 .saved-song small{color:#666}
 .saved-song .danger{color:#a40000}
+.legacy summary{font-weight:700;cursor:pointer}
 @media(max-width:650px){
   h1{font-size:26px}
   .stem-status{grid-template-columns:1fr}
