@@ -44,10 +44,11 @@ let audioCtx = null;
 let ortModule = null;
 let demucsSession = null;
 let backendName = "";
-const buffers = new Map();
 const gains = new Map();
+const mediaEls = new Map();
+const mediaSources = new Map();
+const objectUrls = new Map();
 let currentFiles = new Map();
-let sources = [];
 let clickNodes = [];
 let isPlaying = false;
 let isCounting = false;
@@ -125,10 +126,9 @@ function ensureAudioGraph() {
 }
 
 function stopSources() {
-  for (const source of sources) {
-    try { source.stop(); } catch (_) {}
+  for (const audio of mediaEls.values()) {
+    try { audio.pause(); } catch (_) {}
   }
-  sources = [];
 }
 
 function stopCountIn() {
@@ -147,19 +147,15 @@ function stopEverything() {
   stopSources();
 }
 
-function scheduleStemPlayback(position, when) {
+async function scheduleStemPlayback(position) {
   stopSources();
-  for (const def of stemDefs) {
-    const buffer = buffers.get(def.key);
-    if (!buffer || position >= buffer.duration) continue;
-    const source = audioCtx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(gains.get(def.key));
-    source.start(when, position);
-    sources.push(source);
+  const startPos = Math.min(Math.max(0, position), duration);
+  for (const audio of mediaEls.values()) {
+    try { audio.currentTime = Math.min(startPos, Math.max(0, (audio.duration || duration) - 0.02)); } catch (_) {}
   }
-  offset = position;
-  startedAt = when;
+  await Promise.all(Array.from(mediaEls.values()).map(a => a.play().catch(err => { throw err; })));
+  offset = startPos;
+  startedAt = performance.now() / 1000;
   isPlaying = true;
   playPause.textContent = "⏸ 一時停止";
   tick();
@@ -191,7 +187,7 @@ async function playFrom(position, withCount = false) {
   const doCount = withCount && startPos < 0.05 && bars > 0;
 
   if (!doCount) {
-    scheduleStemPlayback(startPos, audioCtx.currentTime + 0.05);
+    await scheduleStemPlayback(startPos);
     return;
   }
 
@@ -212,20 +208,25 @@ async function playFrom(position, withCount = false) {
     }, delay));
   }
 
-  scheduleStemPlayback(0, songStart);
-  playPause.textContent = "■ カウント停止";
   const endDelay = Math.max(0, (songStart - audioCtx.currentTime) * 1000);
-  countTimers.push(setTimeout(() => {
+  countTimers.push(setTimeout(async () => {
     if (!isCounting) return;
     isCounting = false;
     countDisplay.textContent = "";
-    playPause.textContent = "⏸ 一時停止";
+    try {
+      await scheduleStemPlayback(0);
+    } catch (err) {
+      console.error(err);
+      playPause.textContent = "▶ 再生";
+    }
   }, endDelay));
 }
 
 function currentPosition() {
-  if (!isPlaying || !audioCtx) return offset;
-  return Math.min(duration, offset + Math.max(0, audioCtx.currentTime - startedAt));
+  if (!isPlaying) return offset;
+  const master = mediaEls.get("drums") || mediaEls.values().next().value;
+  if (master && Number.isFinite(master.currentTime)) return Math.min(duration, master.currentTime);
+  return Math.min(duration, offset + Math.max(0, performance.now() / 1000 - startedAt));
 }
 
 function pausePlayback() {
@@ -264,6 +265,14 @@ function updateTransport() {
 function tick() {
   if (!isPlaying) return;
   const pos = currentPosition();
+  const master = mediaEls.get("drums") || mediaEls.values().next().value;
+  if (master) {
+    for (const audio of mediaEls.values()) {
+      if (audio !== master && Math.abs(audio.currentTime - master.currentTime) > 0.05) {
+        try { audio.currentTime = master.currentTime; } catch (_) {}
+      }
+    }
+  }
   updateTransport();
   if (pos >= duration - 0.03) {
     resetPlayback();
@@ -274,7 +283,6 @@ function tick() {
 
 async function decodeAndLoad(found, title = "") {
   resetPlayback();
-  buffers.clear();
   currentFiles = new Map(found);
   mixerSection.hidden = false;
   playPause.disabled = true;
@@ -284,16 +292,54 @@ async function decodeAndLoad(found, title = "") {
 
   try {
     ensureAudioGraph();
+
+    // Release previous blob URLs/media.
+    for (const url of objectUrls.values()) URL.revokeObjectURL(url);
+    objectUrls.clear();
+    mediaEls.clear();
+
     let done = 0;
+    let maxDuration = 0;
     for (const def of stemDefs) {
       const file = found.get(def.key);
       loadStatus.textContent = `読み込み中… ${done + 1}/6（${def.label}）`;
-      const arrayBuffer = await file.arrayBuffer();
-      const decoded = await audioCtx.decodeAudioData(arrayBuffer);
-      buffers.set(def.key, decoded);
+      const url = URL.createObjectURL(file);
+      objectUrls.set(def.key, url);
+      const audio = new Audio();
+      audio.preload = "auto";
+      audio.src = url;
+      audio.playsInline = true;
+
+      await new Promise((resolve, reject) => {
+        const ok = () => { cleanup(); resolve(); };
+        const ng = () => { cleanup(); reject(new Error(def.label + "の音源を読み込めません")); };
+        const cleanup = () => {
+          audio.removeEventListener("loadedmetadata", ok);
+          audio.removeEventListener("error", ng);
+        };
+        audio.addEventListener("loadedmetadata", ok, { once: true });
+        audio.addEventListener("error", ng, { once: true });
+        audio.load();
+      });
+
+      maxDuration = Math.max(maxDuration, audio.duration || 0);
+      mediaEls.set(def.key, audio);
+
+      if (!mediaSources.has(def.key)) {
+        const src = audioCtx.createMediaElementSource(audio);
+        src.connect(gains.get(def.key));
+        mediaSources.set(def.key, src);
+      } else {
+        // createMediaElementSource cannot be reused with a new element.
+        // Replace the connection record with the new element source.
+        const src = audioCtx.createMediaElementSource(audio);
+        src.connect(gains.get(def.key));
+        mediaSources.set(def.key, src);
+      }
       done += 1;
     }
-    duration = Math.max(...Array.from(buffers.values()).map(b => b.duration));
+
+    duration = maxDuration;
     offset = 0;
     updateTransport();
     buildMixer();
@@ -448,6 +494,31 @@ async function separateOnDevice(file) {
     await decodeAndLoad(found, base);
     setAiProgress(100, `分離完了（${backendName}）`);
     loadStatus.textContent = `AI分離完了：6パート（MP3 ${MP3_KBPS}kbps）`;
+
+    // 分離完了時点で自動保存。画面を閉じても次回「保存した曲」から戻せるようにする。
+    try {
+      if (navigator.storage?.persist) await navigator.storage.persist();
+      const stems = {};
+      for (const def of stemDefs) {
+        const f = found.get(def.key);
+        stems[def.key] = { blob: f, name: f.name, type: f.type };
+      }
+      const volumes = Object.fromEntries(stemDefs.map(d => [d.key, volumeValues.get(d.key) ?? 100]));
+      await putSong({
+        title: base,
+        bpm: Math.min(300, Math.max(30, Number(bpmInput.value) || 120)),
+        countBars: Math.min(2, Math.max(0, Number(countBars.value) || 0)),
+        stems,
+        volumes,
+        savedAt: Date.now(),
+        autoSaved: true
+      });
+      saveStatus.textContent = "分離結果を自動保存しました。";
+      await renderSavedSongs();
+    } catch (saveErr) {
+      console.error(saveErr);
+      saveStatus.textContent = "自動保存できませんでした。ブラウザの保存容量を確認してください。";
+    }
   } finally {
     separateBtn.disabled = !selectedSourceFile;
     sourceFileInput.disabled = false;
@@ -538,8 +609,14 @@ seek.addEventListener("input", () => {
 seek.addEventListener("change", async () => {
   if (!duration) return;
   const newPos = (Number(seek.value) / 1000) * duration;
-  if (isPlaying) await playFrom(newPos, false);
-  else {
+  if (isPlaying) {
+    stopSources();
+    isPlaying = false;
+    await playFrom(newPos, false);
+  } else {
+    for (const audio of mediaEls.values()) {
+      try { audio.currentTime = newPos; } catch (_) {}
+    }
     offset = newPos;
     updateTransport();
   }
